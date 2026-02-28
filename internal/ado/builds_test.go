@@ -70,3 +70,24 @@ func TestParseBuildURLResultsBuildID(t *testing.T) {
 		t.Fatalf("buildID = %q, want 447", info.BuildID)
 	}
 }
+
+func TestNormalizeSourceBranch(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		out  string
+	}{
+		{name: "empty", in: "", out: ""},
+		{name: "short", in: "feature/x", out: "refs/heads/feature/x"},
+		{name: "full ref", in: "refs/heads/feature/x", out: "refs/heads/feature/x"},
+		{name: "other refs", in: "refs/pull/1/merge", out: "refs/pull/1/merge"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeSourceBranch(tt.in)
+			if got != tt.out {
+				t.Fatalf("normalizeSourceBranch(%q) = %q, want %q", tt.in, got, tt.out)
+			}
+		})
+	}
+}

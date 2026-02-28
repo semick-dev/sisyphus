@@ -38,12 +38,12 @@ func TestBuildFailureInstructionsIncludesLog(t *testing.T) {
 	}
 
 	result, err := BuildFailureInstructions(
-		"Org/repo#1",
 		"99",
 		filepath.Clean("."),
-		123,
+		intPtr(123),
 		client,
-		10,
+		1000,
+		"",
 	)
 	if err != nil {
 		t.Fatalf("BuildFailureInstructions() error = %v", err)
@@ -54,4 +54,8 @@ func TestBuildFailureInstructionsIncludesLog(t *testing.T) {
 	if !strings.Contains(result, "123") {
 		t.Fatalf("result does not contain build id: %q", result)
 	}
+}
+
+func intPtr(v int) *int {
+	return &v
 }

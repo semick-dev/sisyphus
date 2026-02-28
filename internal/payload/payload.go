@@ -2,8 +2,6 @@ package payload
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"sisyphus/internal/ado"
@@ -20,18 +18,38 @@ const baseTemplate = "Instructions:\n" +
 	"- If absolutely necessary, ADO_PAT is available in environment if you need to make limited requests of ADO with an identity that can interrogate the build system over REST calls. Do not abuse this." +
 	"- State your conclusions, then exit this copilot prompt with 0 if you feel you succeeded, otherwise exit with 1\n"
 
-func BuildFailureInstructions(issue string, buildYAMLPath string, repoPath string, buildID int, client *ado.Client, logMaxBytes int) (string, error) {
+func BuildFailureInstructions(buildYAMLPath string, repoPath string, buildID *int, client *ado.Client, logMaxBytes int, failureDetail string) (string, error) {
 	_ = repoPath
-	buildURL := fmt.Sprintf(
-		"%s/%s/%s/_build/results?buildId=%d&view=results",
-		strings.TrimRight(client.BaseURL, "/"),
-		client.Org,
-		client.Project,
-		buildID,
-	)
-	logExcerpt, err := ado.FetchFailureExcerpt(client, buildID, logMaxBytes)
-	if err != nil {
-		return "", err
+	buildURL := "<queue submission failed>"
+	logExcerpt := ""
+	failureDetail = strings.TrimSpace(failureDetail)
+	if buildID != nil {
+		buildURL = fmt.Sprintf(
+			"%s/%s/%s/_build/results?buildId=%d&view=results",
+			strings.TrimRight(client.BaseURL, "/"),
+			client.Org,
+			client.Project,
+			*buildID,
+		)
+		fetched, err := ado.FetchFailureExcerpt(client, *buildID, logMaxBytes)
+		if err != nil {
+			if failureDetail == "" {
+				return "", err
+			}
+			logExcerpt = failureDetail
+			failureDetail = fmt.Sprintf("Failed to fetch build logs: %v", err)
+		} else {
+			logExcerpt = fetched
+		}
+	} else {
+		logExcerpt = failureDetail
+		failureDetail = ""
+	}
+	if failureDetail != "" && logExcerpt != "" {
+		logExcerpt = logExcerpt + "\n\nAdditional failure detail:\n" + failureDetail
+	}
+	if logExcerpt == "" {
+		logExcerpt = "<no failure details available>"
 	}
 	yamlPath := buildYAMLPath
 	if yamlPath == "" {
@@ -44,8 +62,4 @@ func BuildFailureInstructions(issue string, buildYAMLPath string, repoPath strin
 		"{build_definition_yaml_path}", yamlPath,
 	).Replace(baseTemplate)
 	return out, nil
-}
-
-func WriteInstructions(path string, content string) error {
-	return os.WriteFile(filepath.Clean(path), []byte(content), 0o644)
 }

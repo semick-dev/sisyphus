@@ -16,10 +16,10 @@ import (
 )
 
 type config struct {
-	Issue        string
 	Build        string
 	PAT          string
-	LLM          string
+	CLI          string
+	Branch       string
 	SleepSeconds int
 	LogMaxBytes  int
 }
@@ -30,18 +30,14 @@ func parseArgs() (config, error) {
 	var stderr bytes.Buffer
 	fs.SetOutput(&stderr)
 
-	fs.StringVar(&cfg.Issue, "issue", "", "Issue identifier (Org/repo#xxx) or starting prompt.")
 	fs.StringVar(&cfg.Build, "build", "", "ADO build definition URL or build results URL.")
 	fs.StringVar(&cfg.PAT, "pat", "", "ADO PAT token. Optionally sourced from ADO_PAT environment variable.")
-	fs.StringVar(&cfg.LLM, "llm", "codex", "LLM CLI to invoke for autopilot (codex|claude|copilot).")
+	fs.StringVar(&cfg.CLI, "cli", "codex", "CLI executor to invoke for autopilot.")
 	fs.IntVar(&cfg.SleepSeconds, "sleep-seconds", 30, "Seconds to sleep between build status checks.")
-	fs.IntVar(&cfg.LogMaxBytes, "log-max-bytes", 200000, "Max bytes of log content to attach to instructions.")
+	fs.IntVar(&cfg.LogMaxBytes, "log-max-bytes", 300000, "Max bytes of log content to attach to instructions.")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return cfg, fmt.Errorf("%w\n%s", err, stderr.String())
-	}
-	if cfg.Issue == "" {
-		return cfg, fmt.Errorf("--issue is required")
 	}
 	if cfg.Build == "" {
 		return cfg, fmt.Errorf("--build is required")
@@ -52,10 +48,8 @@ func parseArgs() (config, error) {
 	if cfg.PAT == "" {
 		return cfg, fmt.Errorf("an ADO PAT must be provided in --pat or ADO_PAT environment variable")
 	}
-	switch cfg.LLM {
-	case "codex", "claude", "copilot":
-	default:
-		return cfg, fmt.Errorf("--llm must be one of codex, claude, copilot")
+	if strings.TrimSpace(cfg.CLI) == "" {
+		return cfg, fmt.Errorf("--cli must not be empty")
 	}
 
 	return cfg, nil
@@ -123,6 +117,7 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "Refusing to run on detached HEAD. Create a working branch first.")
 		return 2
 	}
+	cfg.Branch = branch
 
 	info, err := ado.ParseBuildURL(cfg.Build)
 	if err != nil {
@@ -171,13 +166,13 @@ func run() int {
 	}
 
 	err = push.Run(push.RunConfig{
-		Issue:         cfg.Issue,
 		BuildDef:      effectiveBuildDef,
 		BuildYAMLPath: buildYAMLPath,
 		StartBuildID:  startBuildID,
 		InitialPrompt: initialPrompt,
 		RepoPath:      repoPath,
-		LLM:           cfg.LLM,
+		CLI:           cfg.CLI,
+		Branch:        cfg.Branch,
 		SleepSeconds:  cfg.SleepSeconds,
 		LogMaxBytes:   cfg.LogMaxBytes,
 		ADOOrg:        info.Org,

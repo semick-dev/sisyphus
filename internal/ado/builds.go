@@ -75,16 +75,34 @@ func ParseBuildURL(buildURL string) (BuildURLInfo, error) {
 	}, nil
 }
 
-func QueueBuild(client *Client, definition string, apiVersion string) (int, error) {
+func normalizeSourceBranch(branch string) string {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return ""
+	}
+	if strings.HasPrefix(branch, "refs/") {
+		return branch
+	}
+	return "refs/heads/" + branch
+}
+
+func QueueBuild(client *Client, definition string, sourceBranch string, apiVersion string) (int, error) {
 	if apiVersion == "" {
 		apiVersion = DefaultBuildsAPIVersion
+	}
+	body := map[string]any{
+		"definition": map[string]string{"id": definition},
+	}
+	normalizedBranch := normalizeSourceBranch(sourceBranch)
+	if normalizedBranch != "" {
+		body["sourceBranch"] = normalizedBranch
 	}
 	var data map[string]any
 	err := client.RequestJSON(
 		"POST",
 		"/_apis/build/builds",
 		map[string]string{"api-version": apiVersion},
-		map[string]any{"definition": map[string]string{"id": definition}},
+		body,
 		&data,
 	)
 	if err != nil {

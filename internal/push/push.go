@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,32 +12,46 @@ import (
 )
 
 type RunConfig struct {
-	Issue        string
-	BuildDef     string
+	BuildDef      string
 	BuildYAMLPath string
-	StartBuildID *int
+	StartBuildID  *int
 	InitialPrompt string
-	RepoPath     string
-	LLM          string
-	SleepSeconds int
-	LogMaxBytes  int
-	ADOOrg       string
-	ADOProject   string
-	ADOBaseURL   string
-	PAT          string
+	RepoPath      string
+	CLI           string
+	Branch        string
+	SleepSeconds  int
+	LogMaxBytes   int
+	ADOOrg        string
+	ADOProject    string
+	ADOBaseURL    string
+	PAT           string
+}
+
+type NotImplementedError struct {
+	Feature string
+}
+
+func (e NotImplementedError) Error() string {
+	return fmt.Sprintf("NotImplementedError: %s", e.Feature)
 }
 
 type completedBuild struct {
-	BuildID      int
-	Status       string
-	Result       string
-	DefinitionID string
+	BuildID       int
+	Status        string
+	Result        string
+	DefinitionID  string
+	FailureDetail string
+}
+
+func logStep(format string, args ...any) {
+	fmt.Printf("[sisyphus] "+format+"\n", args...)
 }
 
 func runCmd(cwd string, cmd []string) error {
 	if len(cmd) == 0 {
 		return fmt.Errorf("empty command")
 	}
+	logStep("running command: %s", strings.Join(cmd, " "))
 	command := exec.Command(cmd[0], cmd[1:]...)
 	if cwd != "" {
 		command.Dir = cwd
@@ -96,19 +109,20 @@ func repoHasChanges(repoPath string) (bool, error) {
 	return strings.TrimSpace(status) != "", nil
 }
 
-func invokeLLM(llm string, instructionsPath string) error {
+func invokeCLI(cli string, repoPath string, prompt string) error {
 	var cmd []string
-	switch llm {
+	switch cli {
 	case "codex":
-		cmd = []string{"codex", "-p", instructionsPath, "--autopilot"}
-	case "claude":
-		cmd = []string{"claude", "-p", instructionsPath}
-	case "copilot":
-		cmd = []string{"copilot", "-p", instructionsPath}
+		prompt = strings.TrimSpace(prompt)
+		if prompt == "" {
+			return fmt.Errorf("instructions are empty")
+		}
+		logStep("invoking codex with prompt (%d bytes)", len([]byte(prompt)))
+		cmd = []string{"codex", "exec", "--full-auto", prompt}
 	default:
-		return fmt.Errorf("unsupported llm: %s", llm)
+		return NotImplementedError{Feature: fmt.Sprintf("cli executor %q", cli)}
 	}
-	return runCmd("", cmd)
+	return runCmd(repoPath, cmd)
 }
 
 func gitCommitAndPush(repoPath string, message string) error {
@@ -127,11 +141,22 @@ func gitCommitAndPush(repoPath string, message string) error {
 	return nil
 }
 
-func initialPrompt(instructionsPath string, prompt string) error {
-	return payload.WriteInstructions(instructionsPath, prompt)
+func commitAndPushIfChanges(repoPath string, message string) (bool, error) {
+	hasChanges, err := repoHasChanges(repoPath)
+	if err != nil {
+		return false, err
+	}
+	if !hasChanges {
+		return false, nil
+	}
+	if err := gitCommitAndPush(repoPath, message); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func waitOnBuild(client *ado.Client, buildID int, sleepSeconds int) (completedBuild, error) {
+	logStep("waiting for build %d to complete (poll every %ds)", buildID, sleepSeconds)
 	for {
 		build, err := ado.GetBuild(client, buildID, "")
 		if err != nil {
@@ -141,42 +166,67 @@ func waitOnBuild(client *ado.Client, buildID int, sleepSeconds int) (completedBu
 		status, _ := build["status"].(string)
 		result, _ := build["result"].(string)
 		definitionID := ado.ExtractBuildDefinitionID(build)
+		failureDetail := extractSubmissionFailure(build)
 		if status == "completed" {
 			if result == "" {
 				result = "unknown"
 			}
+			logStep("build %d completed with result=%s", buildID, result)
 			return completedBuild{
-				BuildID:      buildID,
-				Status:       status,
-				Result:       result,
-				DefinitionID: definitionID,
+				BuildID:       buildID,
+				Status:        status,
+				Result:        result,
+				DefinitionID:  definitionID,
+				FailureDetail: failureDetail,
 			}, nil
 		}
 
 		if status == "" {
 			status = "unknown"
 		}
+		logStep("build %d status=%s result=%s", buildID, status, result)
 		time.Sleep(time.Duration(sleepSeconds) * time.Second)
 	}
 }
 
+func extractSubmissionFailure(build map[string]any) string {
+	items, ok := build["validationResults"].([]any)
+	if !ok || len(items) == 0 {
+		return ""
+	}
+	messages := make([]string, 0, len(items))
+	for _, item := range items {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if msg, ok := entry["message"].(string); ok && strings.TrimSpace(msg) != "" {
+			messages = append(messages, msg)
+		}
+	}
+	return strings.Join(messages, "\n")
+}
+
 func Run(cfg RunConfig) error {
-	instructionsPath := filepath.Join(cfg.RepoPath, "instructions.md")
+	logStep("starting run (cli=%s, repo=%s)", cfg.CLI, cfg.RepoPath)
 	if err := ensureClean(cfg.RepoPath); err != nil {
 		return err
+	}
+	logStep("working tree is clean")
+	if strings.TrimSpace(cfg.Branch) == "" {
+		return fmt.Errorf("branch is required")
 	}
 
 	client := ado.NewClient(cfg.ADOOrg, cfg.ADOProject, cfg.ADOBaseURL, cfg.PAT)
 	buildID := cfg.StartBuildID
 	effectiveBuildDef := cfg.BuildDef
 	effectiveBuildYAMLPath := cfg.BuildYAMLPath
+	treatCurrentBuildAsFailure := buildID != nil
 	iteration := 0
 
 	if buildID == nil && strings.TrimSpace(cfg.InitialPrompt) != "" {
-		if err := initialPrompt(instructionsPath, cfg.InitialPrompt); err != nil {
-			return err
-		}
-		if err := invokeLLM(cfg.LLM, instructionsPath); err != nil {
+		logStep("running initial prompt")
+		if err := invokeCLI(cfg.CLI, cfg.RepoPath, cfg.InitialPrompt); err != nil {
 			return err
 		}
 		hasChanges, err := repoHasChanges(cfg.RepoPath)
@@ -184,65 +234,82 @@ func Run(cfg RunConfig) error {
 			return err
 		}
 		if hasChanges {
+			logStep("initial prompt produced changes; committing and pushing")
 			if err := gitCommitAndPush(cfg.RepoPath, "sisyphus initial prompt"); err != nil {
 				return err
 			}
+		} else {
+			logStep("initial prompt produced no changes")
 		}
 	}
 
 	for {
+		var failureDetail string
 		if buildID == nil {
 			if effectiveBuildDef == "" {
 				return fmt.Errorf("missing build definition id; cannot queue a new build")
 			}
-			newID, err := ado.QueueBuild(client, effectiveBuildDef, "")
+			logStep("queueing build for definition %s on branch %s", effectiveBuildDef, cfg.Branch)
+			newID, err := ado.QueueBuild(client, effectiveBuildDef, cfg.Branch, "")
+			if err != nil {
+				failureDetail = fmt.Sprintf("Build submission failed while queueing definition %s:\n%s", effectiveBuildDef, err.Error())
+				logStep("queueing failed; will run remediation prompt with submission error details")
+			} else {
+				buildID = &newID
+				logStep("queued build id=%d", *buildID)
+			}
+		}
+
+		var failingBuildID *int
+		if failureDetail == "" {
+			result, err := waitOnBuild(client, *buildID, cfg.SleepSeconds)
 			if err != nil {
 				return err
 			}
-			buildID = &newID
-		}
-
-		result, err := waitOnBuild(client, *buildID, cfg.SleepSeconds)
-		if err != nil {
-			return err
-		}
-		if result.Result == "succeeded" {
-			return nil
-		}
-		if result.DefinitionID != "" {
-			effectiveBuildDef = result.DefinitionID
+			if result.Result == "succeeded" && !treatCurrentBuildAsFailure {
+				return nil
+			}
+			if result.DefinitionID != "" {
+				effectiveBuildDef = result.DefinitionID
+			}
+			failingBuildID = buildID
+			failureDetail = result.FailureDetail
+			treatCurrentBuildAsFailure = false
 		}
 
 		failurePayload, err := payload.BuildFailureInstructions(
-			cfg.Issue,
 			effectiveBuildYAMLPath,
 			cfg.RepoPath,
-			result.BuildID,
+			failingBuildID,
 			client,
 			cfg.LogMaxBytes,
+			failureDetail,
 		)
 		if err != nil {
 			return err
 		}
-		if err := payload.WriteInstructions(instructionsPath, failurePayload); err != nil {
+		logStep("built remediation prompt (%d bytes)", len([]byte(failurePayload)))
+		if err := invokeCLI(cfg.CLI, cfg.RepoPath, failurePayload); err != nil {
 			return err
 		}
-		if err := invokeLLM(cfg.LLM, instructionsPath); err != nil {
+		logStep("codex completed; checking for changes to commit")
+		committed, err := commitAndPushIfChanges(cfg.RepoPath, fmt.Sprintf("sisyphus iteration %d", iteration))
+		if err != nil {
 			return err
 		}
-		if err := gitCommitAndPush(cfg.RepoPath, fmt.Sprintf("sisyphus iteration %d", iteration)); err != nil {
-			return err
+		if committed {
+			logStep("pushed commit for iteration %d", iteration)
+		} else {
+			logStep("no changes produced this iteration; continuing to next build")
 		}
+		logStep("iteration %d complete", iteration)
 		iteration++
 
 		if effectiveBuildDef == "" {
 			return fmt.Errorf("missing build definition id; cannot queue a new build")
 		}
-		newID, err := ado.QueueBuild(client, effectiveBuildDef, "")
-		if err != nil {
-			return err
-		}
-		buildID = &newID
+		buildID = nil
+		logStep("sleeping %ds before next queue attempt", cfg.SleepSeconds)
 		time.Sleep(time.Duration(cfg.SleepSeconds) * time.Second)
 	}
 }

@@ -9,8 +9,7 @@ For things that are seemingly just fighting with the OS or system, let this simp
 Start it with the following:
 
 - A ADO PAT for interacting with the build system
-- A target build you want to run
-- An issue# or starting prompt
+- A target build URL
 
 Your local pwd will be used as the working directory, so plan accordingly!
 
@@ -35,20 +34,20 @@ go install ./cmd/sisyphus
 `--build` supports two URL forms:
 
 - Build definition URL (`?definitionId=...`): queues a new build for your current branch. You will be prompted for an optional initial prompt; if it produces git changes, they are committed/pushed before the normal loop starts.
-- Build results URL (`?buildId=...`): starts from that existing build, resolves definition metadata once, then enters the normal loop.
+- Build results URL (`?buildId=...`): treats that starting build as a failure context, attempts a fix, commits/pushes, then enters the normal queue/wait loop.
 
 Examples:
 
 ```bash
 sisyphus \
-  --issue "Org/repo#123" \
   --build "https://dev.azure.com/myorg/myproject/_build?definitionId=42" \
   --pat "$ADO_PAT"
 ```
 
 ```bash
 sisyphus \
-  --issue "Org/repo#123" \
   --build "https://dev.azure.com/myorg/myproject/_build/results?buildId=447&view=results" \
   --pat "$ADO_PAT"
 ```
+
+`--cli` controls the executor and defaults to `codex`.

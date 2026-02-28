@@ -2,6 +2,7 @@ package ado
 
 import (
 	"fmt"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -69,13 +70,26 @@ func FetchFailureExcerpt(client *Client, buildID int, maxBytes int) (string, err
 		return "<no logs available>", nil
 	}
 
-	lastID, err := anyToInt(logs[len(logs)-1]["id"])
-	if err != nil {
-		return "", err
+	var combined strings.Builder
+	for idx, logEntry := range logs {
+		logID, err := anyToInt(logEntry["id"])
+		if err != nil {
+			return "", err
+		}
+		content, err := GetLog(client, buildID, logID, "")
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&combined, "===== log %d/%d (id=%d) =====\n", idx+1, len(logs), logID)
+		combined.WriteString(content)
+		if !strings.HasSuffix(content, "\n") {
+			combined.WriteString("\n")
+		}
 	}
-	content, err := GetLog(client, buildID, lastID, "")
-	if err != nil {
-		return "", err
+
+	full := combined.String()
+	if maxBytes <= 0 {
+		return full, nil
 	}
-	return Truncate(content, maxBytes), nil
+	return Truncate(full, maxBytes), nil
 }
