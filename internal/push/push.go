@@ -13,6 +13,7 @@ import (
 
 type RunConfig struct {
 	BuildDef      string
+	BuildURL      string
 	BuildYAMLPath string
 	StartBuildID  *int
 	InitialPrompt string
@@ -43,15 +44,27 @@ type completedBuild struct {
 	FailureDetail string
 }
 
+var liveConsole *consoleUI
+
 func logStep(format string, args ...any) {
-	fmt.Printf("[sisyphus] "+format+"\n", args...)
+	line := fmt.Sprintf("[sisyphus] "+format, args...)
+	if liveConsole != nil {
+		liveConsole.Log(line)
+		return
+	}
+	fmt.Println(line)
 }
 
 func runCmd(cwd string, cmd []string) error {
+	_, _, err := runCmdCapture(cwd, cmd)
+	return err
+}
+
+func runCmdCapture(cwd string, cmd []string) (string, string, error) {
 	if len(cmd) == 0 {
-		return fmt.Errorf("empty command")
+		return "", "", fmt.Errorf("empty command")
 	}
-	logStep("running command: %s", strings.Join(cmd, " "))
+	logStep("running command: %s", summarizeCommand(cmd))
 	command := exec.Command(cmd[0], cmd[1:]...)
 	if cwd != "" {
 		command.Dir = cwd
@@ -61,9 +74,16 @@ func runCmd(cwd string, cmd []string) error {
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
-		return fmt.Errorf("command failed: %s\nstdout:\n%s\nstderr:\n%s", strings.Join(cmd, " "), stdout.String(), stderr.String())
+		return stdout.String(), stderr.String(), fmt.Errorf("command failed: %s\nstdout:\n%s\nstderr:\n%s", strings.Join(cmd, " "), stdout.String(), stderr.String())
 	}
-	return nil
+	return stdout.String(), stderr.String(), nil
+}
+
+func summarizeCommand(cmd []string) string {
+	if len(cmd) >= 4 && cmd[0] == "codex" && cmd[1] == "exec" && cmd[2] == "--full-auto" {
+		return fmt.Sprintf("codex exec --full-auto <prompt:%d bytes>", len([]byte(cmd[3])))
+	}
+	return strings.Join(cmd, " ")
 }
 
 func gitStatus(repoPath string) (string, error) {
@@ -118,11 +138,30 @@ func invokeCLI(cli string, repoPath string, prompt string) error {
 			return fmt.Errorf("instructions are empty")
 		}
 		logStep("invoking codex with prompt (%d bytes)", len([]byte(prompt)))
+		if liveConsole != nil {
+			liveConsole.SetContext("Codex input tail (last 40 lines):", prompt)
+			liveConsole.StartCodexAnimation()
+			defer liveConsole.StopCodexAnimation()
+		}
 		cmd = []string{"codex", "exec", "--full-auto", prompt}
 	default:
 		return NotImplementedError{Feature: fmt.Sprintf("cli executor %q", cli)}
 	}
-	return runCmd(repoPath, cmd)
+	stdout, stderr, err := runCmdCapture(repoPath, cmd)
+	if liveConsole != nil {
+		response := strings.TrimSpace(stdout)
+		if strings.TrimSpace(stderr) != "" {
+			if response != "" {
+				response += "\n"
+			}
+			response += strings.TrimSpace(stderr)
+		}
+		if response == "" {
+			response = "<no codex output captured>"
+		}
+		liveConsole.SetContext("Codex response tail (last 40 lines):", response)
+	}
+	return err
 }
 
 func gitCommitAndPush(repoPath string, message string) error {
@@ -208,6 +247,14 @@ func extractSubmissionFailure(build map[string]any) string {
 }
 
 func Run(cfg RunConfig) error {
+	liveConsole = newConsoleUI(cfg.RepoPath, cfg.BuildURL)
+	defer func() {
+		if liveConsole != nil {
+			liveConsole.Close()
+			liveConsole = nil
+		}
+	}()
+
 	logStep("starting run (cli=%s, repo=%s)", cfg.CLI, cfg.RepoPath)
 	if err := ensureClean(cfg.RepoPath); err != nil {
 		return err
@@ -245,6 +292,7 @@ func Run(cfg RunConfig) error {
 
 	for {
 		var failureDetail string
+		pollSeconds := cfg.SleepSeconds
 		if buildID == nil {
 			if effectiveBuildDef == "" {
 				return fmt.Errorf("missing build definition id; cannot queue a new build")
@@ -257,16 +305,20 @@ func Run(cfg RunConfig) error {
 			} else {
 				buildID = &newID
 				logStep("queued build id=%d", *buildID)
+				pollSeconds = 10
 			}
 		}
 
 		var failingBuildID *int
 		if failureDetail == "" {
-			result, err := waitOnBuild(client, *buildID, cfg.SleepSeconds)
+			result, err := waitOnBuild(client, *buildID, pollSeconds)
 			if err != nil {
 				return err
 			}
 			if result.Result == "succeeded" && !treatCurrentBuildAsFailure {
+				if liveConsole != nil {
+					liveConsole.ShowSuccess(result.BuildID)
+				}
 				return nil
 			}
 			if result.DefinitionID != "" {

@@ -2,28 +2,17 @@
 
 Have you ever fought a failing build and wanted to kill yourself? Enter `sisyphus`.
 
-![This could be you](image.png)
+![This could be you](peasants.png)
 
 For things that are seemingly just fighting with the OS or system, let this simple agent loop push the rock for you.
 
-Start it with the following:
 
-- A ADO PAT for interacting with the build system
-- A target build URL
+![I snipped a lot of dead air lol](sisyphus.gif)
 
-Your local pwd will be used as the working directory, so plan accordingly!
 
-## Go rewrite
+The agent is written in go.
 
-The agent has been rewritten in Go under:
-
-Build the CLI:
-
-```bash
-go build -o ./bin/sisyphus ./cmd/sisyphus
-```
-
-Install onto your PATH:
+Install onto your path:
 
 ```bash
 go install ./cmd/sisyphus
@@ -31,23 +20,43 @@ go install ./cmd/sisyphus
 
 ## Invocation Patterns
 
+`sisyphus` uses the current shell's context, so the intended usage pattern is:
+
+- open new terminal window
+- cd to repo folder
+- `git checkout` a branch for work, set up default origin
+- invoke `sisyphus`
+
 `--build` supports two URL forms:
 
-- Build definition URL (`?definitionId=...`): queues a new build for your current branch. You will be prompted for an optional initial prompt; if it produces git changes, they are committed/pushed before the normal loop starts.
+- Build definition URL (`?definitionId=...`): queues a new build for your current branch. You will be prompted for an optional initial prompt; if the prompt results in changes, they are committed/pushed before the build definition is queued. This offers an opportunity for a change to a stable build OR a requeue to get latest failure mode of a build definition.
 - Build results URL (`?buildId=...`): treats that starting build as a failure context, attempts a fix, commits/pushes, then enters the normal queue/wait loop.
 
-Examples:
-
 ```bash
+Usage of sisyphus:
+  -build string
+        ADO build definition URL or build results URL.
+  -cli string
+        CLI executor to invoke for autopilot. (default "codex")
+  -log-max-bytes int
+        Max bytes of log content to attach to instructions. (default 300000)
+  -pat string
+        ADO PAT token. Optionally sourced from ADO_PAT environment variable. Requires Azure DevOps Build scope with Read and Execute permissions.
+  -sleep-seconds int
+        Seconds to sleep between loop iterations and for polling a provided starting buildId. Newly queued builds are polled every 10 seconds. (default 30)
+
+# install as instructed above
 sisyphus \
-  --build "https://dev.azure.com/myorg/myproject/_build?definitionId=42" \
-  --pat "$ADO_PAT"
+  --build "https://sbeddall.visualstudio.com/Investigations/_build/results?buildId=448&view=results"
+  --pat=$ADO_PAT
 ```
 
 ```bash
+export ADO_PAT=<set from somewhere in your session previously>
+
+# build definition url, will be prompted before queueing a new run
 sisyphus \
-  --build "https://dev.azure.com/myorg/myproject/_build/results?buildId=447&view=results" \
-  --pat "$ADO_PAT"
+  --build "https://sbeddall.visualstudio.com/Investigations/_build?definitionId=8"
 ```
 
 `--cli` controls the executor and defaults to `codex`.

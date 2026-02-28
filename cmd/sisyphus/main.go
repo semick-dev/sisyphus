@@ -31,9 +31,9 @@ func parseArgs() (config, error) {
 	fs.SetOutput(&stderr)
 
 	fs.StringVar(&cfg.Build, "build", "", "ADO build definition URL or build results URL.")
-	fs.StringVar(&cfg.PAT, "pat", "", "ADO PAT token. Optionally sourced from ADO_PAT environment variable.")
+	fs.StringVar(&cfg.PAT, "pat", "", "ADO PAT token. Optionally sourced from ADO_PAT environment variable. Requires Azure DevOps Build scope with Read and Execute permissions.")
 	fs.StringVar(&cfg.CLI, "cli", "codex", "CLI executor to invoke for autopilot.")
-	fs.IntVar(&cfg.SleepSeconds, "sleep-seconds", 30, "Seconds to sleep between build status checks.")
+	fs.IntVar(&cfg.SleepSeconds, "sleep-seconds", 30, "Seconds to sleep between loop iterations and for polling a provided starting buildId. Newly queued builds are polled every 10 seconds.")
 	fs.IntVar(&cfg.LogMaxBytes, "log-max-bytes", 300000, "Max bytes of log content to attach to instructions.")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
@@ -167,6 +167,7 @@ func run() int {
 
 	err = push.Run(push.RunConfig{
 		BuildDef:      effectiveBuildDef,
+		BuildURL:      cfg.Build,
 		BuildYAMLPath: buildYAMLPath,
 		StartBuildID:  startBuildID,
 		InitialPrompt: initialPrompt,
