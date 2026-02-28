@@ -17,6 +17,11 @@ type BuildURLInfo struct {
 	BuildID  string
 }
 
+type BuildDefinitionMetadata struct {
+	ID       string
+	YAMLPath string
+}
+
 func ParseBuildURL(buildURL string) (BuildURLInfo, error) {
 	parsed, err := url.Parse(buildURL)
 	if err != nil {
@@ -159,6 +164,51 @@ func GetBuildDefinitionID(client *Client, buildID int) (string, error) {
 		return "", fmt.Errorf("build %d does not include a definition id", buildID)
 	}
 	return defID, nil
+}
+
+func GetBuildDefinitionMetadata(client *Client, definitionID string, apiVersion string) (BuildDefinitionMetadata, error) {
+	if definitionID == "" {
+		return BuildDefinitionMetadata{}, fmt.Errorf("definition id is required")
+	}
+	if apiVersion == "" {
+		apiVersion = DefaultBuildsAPIVersion
+	}
+
+	var data map[string]any
+	err := client.RequestJSON(
+		"GET",
+		fmt.Sprintf("/_apis/build/definitions/%s", definitionID),
+		map[string]string{"api-version": apiVersion},
+		nil,
+		&data,
+	)
+	if err != nil {
+		return BuildDefinitionMetadata{}, err
+	}
+
+	id := definitionID
+	if rawID, ok := data["id"]; ok {
+		if parsedID, err := anyToInt(rawID); err == nil {
+			id = strconv.Itoa(parsedID)
+		}
+	}
+
+	yamlPath := ""
+	if process, ok := data["process"].(map[string]any); ok {
+		if v, ok := process["yamlFilename"].(string); ok {
+			yamlPath = v
+		}
+	}
+	if yamlPath == "" {
+		if v, ok := data["yamlFilename"].(string); ok {
+			yamlPath = v
+		}
+	}
+
+	return BuildDefinitionMetadata{
+		ID:       id,
+		YAMLPath: yamlPath,
+	}, nil
 }
 
 func anyToInt(v any) (int, error) {

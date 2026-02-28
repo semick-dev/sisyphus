@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"flag"
 	"fmt"
@@ -25,7 +26,7 @@ type config struct {
 
 func parseArgs() (config, error) {
 	var cfg config
-	fs := flag.NewFlagSet("sisyphus-agent", flag.ContinueOnError)
+	fs := flag.NewFlagSet("sisyphus", flag.ContinueOnError)
 	var stderr bytes.Buffer
 	fs.SetOutput(&stderr)
 
@@ -71,6 +72,25 @@ func currentBranch(repoPath string) (string, error) {
 		return "", fmt.Errorf("failed to resolve git branch: %s", strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+func promptForInitialPrompt() (string, error) {
+	fmt.Fprintln(os.Stdout, "Do you have an initial prompt you'd like to start with?")
+	fmt.Fprintln(os.Stdout, "Enter prompt text, then submit an empty line to continue:")
+
+	scanner := bufio.NewScanner(os.Stdin)
+	lines := make([]string, 0, 8)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			break
+		}
+		lines = append(lines, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n")), nil
 }
 
 func run() int {
@@ -119,19 +139,51 @@ func run() int {
 		}
 		startBuildID = &id
 	}
+	var initialPrompt string
+	if startBuildID == nil {
+		initialPrompt, err = promptForInitialPrompt()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+	}
+
+	client := ado.NewClient(info.Org, info.Project, info.BaseURL, cfg.PAT)
+	effectiveBuildDef := info.BuildDef
+	if effectiveBuildDef == "" && startBuildID != nil {
+		defID, err := ado.GetBuildDefinitionID(client, *startBuildID)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		effectiveBuildDef = defID
+	}
+
+	var buildYAMLPath string
+	if effectiveBuildDef != "" {
+		meta, err := ado.GetBuildDefinitionMetadata(client, effectiveBuildDef, "")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		effectiveBuildDef = meta.ID
+		buildYAMLPath = meta.YAMLPath
+	}
 
 	err = push.Run(push.RunConfig{
-		Issue:        cfg.Issue,
-		BuildDef:     info.BuildDef,
-		StartBuildID: startBuildID,
-		RepoPath:     repoPath,
-		LLM:          cfg.LLM,
-		SleepSeconds: cfg.SleepSeconds,
-		LogMaxBytes:  cfg.LogMaxBytes,
-		ADOOrg:       info.Org,
-		ADOProject:   info.Project,
-		ADOBaseURL:   info.BaseURL,
-		PAT:          cfg.PAT,
+		Issue:         cfg.Issue,
+		BuildDef:      effectiveBuildDef,
+		BuildYAMLPath: buildYAMLPath,
+		StartBuildID:  startBuildID,
+		InitialPrompt: initialPrompt,
+		RepoPath:      repoPath,
+		LLM:           cfg.LLM,
+		SleepSeconds:  cfg.SleepSeconds,
+		LogMaxBytes:   cfg.LogMaxBytes,
+		ADOOrg:        info.Org,
+		ADOProject:    info.Project,
+		ADOBaseURL:    info.BaseURL,
+		PAT:           cfg.PAT,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

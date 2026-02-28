@@ -15,7 +15,9 @@ import (
 type RunConfig struct {
 	Issue        string
 	BuildDef     string
+	BuildYAMLPath string
 	StartBuildID *int
+	InitialPrompt string
 	RepoPath     string
 	LLM          string
 	SleepSeconds int
@@ -86,6 +88,14 @@ func ensureHasChanges(repoPath string) error {
 	return nil
 }
 
+func repoHasChanges(repoPath string) (bool, error) {
+	status, err := gitStatus(repoPath)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(status) != "", nil
+}
+
 func invokeLLM(llm string, instructionsPath string) error {
 	var cmd []string
 	switch llm {
@@ -115,6 +125,10 @@ func gitCommitAndPush(repoPath string, message string) error {
 		return err
 	}
 	return nil
+}
+
+func initialPrompt(instructionsPath string, prompt string) error {
+	return payload.WriteInstructions(instructionsPath, prompt)
 }
 
 func waitOnBuild(client *ado.Client, buildID int, sleepSeconds int) (completedBuild, error) {
@@ -155,14 +169,25 @@ func Run(cfg RunConfig) error {
 	client := ado.NewClient(cfg.ADOOrg, cfg.ADOProject, cfg.ADOBaseURL, cfg.PAT)
 	buildID := cfg.StartBuildID
 	effectiveBuildDef := cfg.BuildDef
+	effectiveBuildYAMLPath := cfg.BuildYAMLPath
 	iteration := 0
 
-	if buildID != nil && effectiveBuildDef == "" {
-		defID, err := ado.GetBuildDefinitionID(client, *buildID)
+	if buildID == nil && strings.TrimSpace(cfg.InitialPrompt) != "" {
+		if err := initialPrompt(instructionsPath, cfg.InitialPrompt); err != nil {
+			return err
+		}
+		if err := invokeLLM(cfg.LLM, instructionsPath); err != nil {
+			return err
+		}
+		hasChanges, err := repoHasChanges(cfg.RepoPath)
 		if err != nil {
 			return err
 		}
-		effectiveBuildDef = defID
+		if hasChanges {
+			if err := gitCommitAndPush(cfg.RepoPath, "sisyphus initial prompt"); err != nil {
+				return err
+			}
+		}
 	}
 
 	for {
@@ -190,7 +215,7 @@ func Run(cfg RunConfig) error {
 
 		failurePayload, err := payload.BuildFailureInstructions(
 			cfg.Issue,
-			effectiveBuildDef,
+			effectiveBuildYAMLPath,
 			cfg.RepoPath,
 			result.BuildID,
 			client,
