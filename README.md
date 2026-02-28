@@ -14,3 +14,24 @@ Start it with the following:
 
 Your local pwd will be used as the working directory, so plan accordingly!
 
+## Go rewrite
+
+The agent has been rewritten in Go under:
+
+- `cmd/sisyphus-agent`
+- `internal/ado`
+- `internal/payload`
+- `internal/push`
+- `internal/man`
+
+Build the CLI:
+
+```bash
+go build -o ./bin/sisyphus-agent ./cmd/sisyphus-agent
+```
+
+Install onto your PATH:
+
+```bash
+go install ./cmd/sisyphus-agent
+```

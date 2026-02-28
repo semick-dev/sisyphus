@@ -1,4 +1,4 @@
-# Sisypnus Agent Checklist
+# Sisyphus Agent Checklist
 
 - [x] Create `pyproject.toml` with build metadata and console entrypoint.
 - [x] Add package scaffold under `agent/`.

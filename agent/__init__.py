@@ -1,1 +1,0 @@
-"""Sisypnus agent package."""
