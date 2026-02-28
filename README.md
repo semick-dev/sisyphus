@@ -33,6 +33,8 @@ go install ./cmd/sisyphus
 - Build results URL (`?buildId=...`): treats that starting build as a failure context, attempts a fix, commits/pushes, then enters the normal queue/wait loop.
 
 ```bash
+# install as instructed above
+sisyphus -h
 Usage of sisyphus:
   -build string
         ADO build definition URL or build results URL.
@@ -45,18 +47,16 @@ Usage of sisyphus:
   -sleep-seconds int
         Seconds to sleep between loop iterations and for polling a provided starting buildId. Newly queued builds are polled every 10 seconds. (default 30)
 
-# install as instructed above
-sisyphus \
-  --build "https://sbeddall.visualstudio.com/Investigations/_build/results?buildId=448&view=results"
-  --pat=$ADO_PAT
 ```
 
 ```bash
+sisyphus \
+  --build "https://sbeddall.visualstudio.com/Investigations/_build/results?buildId=448&view=results"
+  --pat=$ADO_PAT
+
 export ADO_PAT=<set from somewhere in your session previously>
 
 # build definition url, will be prompted before queueing a new run
 sisyphus \
   --build "https://sbeddall.visualstudio.com/Investigations/_build?definitionId=8"
 ```
-
-`--cli` controls the executor and defaults to `codex`.
