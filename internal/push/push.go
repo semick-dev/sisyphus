@@ -13,17 +13,24 @@ import (
 )
 
 type RunConfig struct {
-	Issue       string
-	BuildDef    string
+	Issue        string
+	BuildDef     string
 	StartBuildID *int
-	RepoPath    string
-	LLM         string
+	RepoPath     string
+	LLM          string
 	SleepSeconds int
-	LogMaxBytes int
-	ADOOrg      string
-	ADOProject  string
-	ADOBaseURL  string
-	PAT         string
+	LogMaxBytes  int
+	ADOOrg       string
+	ADOProject   string
+	ADOBaseURL   string
+	PAT          string
+}
+
+type completedBuild struct {
+	BuildID      int
+	Status       string
+	Result       string
+	DefinitionID string
 }
 
 func runCmd(cwd string, cmd []string) error {
@@ -110,39 +117,47 @@ func gitCommitAndPush(repoPath string, message string) error {
 	return nil
 }
 
+func waitOnBuild(client *ado.Client, buildID int, sleepSeconds int) (completedBuild, error) {
+	for {
+		build, err := ado.GetBuild(client, buildID, "")
+		if err != nil {
+			return completedBuild{}, err
+		}
+
+		status, _ := build["status"].(string)
+		result, _ := build["result"].(string)
+		definitionID := ado.ExtractBuildDefinitionID(build)
+		if status == "completed" {
+			if result == "" {
+				result = "unknown"
+			}
+			return completedBuild{
+				BuildID:      buildID,
+				Status:       status,
+				Result:       result,
+				DefinitionID: definitionID,
+			}, nil
+		}
+
+		if status == "" {
+			status = "unknown"
+		}
+		time.Sleep(time.Duration(sleepSeconds) * time.Second)
+	}
+}
+
 func Run(cfg RunConfig) error {
 	instructionsPath := filepath.Join(cfg.RepoPath, "instructions.md")
-
 	if err := ensureClean(cfg.RepoPath); err != nil {
 		return err
 	}
 
 	client := ado.NewClient(cfg.ADOOrg, cfg.ADOProject, cfg.ADOBaseURL, cfg.PAT)
-
 	buildID := cfg.StartBuildID
 	effectiveBuildDef := cfg.BuildDef
+	iteration := 0
 
-	if buildID == nil {
-		baseInstructions := payload.BuildInitialInstructions(cfg.Issue, cfg.BuildDef, cfg.RepoPath)
-		if err := payload.WriteInstructions(instructionsPath, baseInstructions); err != nil {
-			return err
-		}
-		if err := invokeLLM(cfg.LLM, instructionsPath); err != nil {
-			return err
-		}
-		if err := gitCommitAndPush(cfg.RepoPath, "Automated agent update"); err != nil {
-			return err
-		}
-		if effectiveBuildDef == "" {
-			return fmt.Errorf("missing build definition id; cannot queue a new build")
-		}
-		newID, err := ado.QueueBuild(client, effectiveBuildDef, "")
-		if err != nil {
-			return err
-		}
-		buildID = &newID
-		time.Sleep(time.Duration(cfg.SleepSeconds) * time.Second)
-	} else if effectiveBuildDef == "" {
+	if buildID != nil && effectiveBuildDef == "" {
 		defID, err := ado.GetBuildDefinitionID(client, *buildID)
 		if err != nil {
 			return err
@@ -151,39 +166,7 @@ func Run(cfg RunConfig) error {
 	}
 
 	for {
-		status, err := ado.GetBuildStatus(client, *buildID)
-		if err != nil {
-			return err
-		}
-		if status == "completed" {
-			result, err := ado.GetBuildResult(client, *buildID)
-			if err != nil {
-				return err
-			}
-			if result == "succeeded" {
-				return nil
-			}
-
-			failurePayload, err := payload.BuildFailureInstructions(
-				cfg.Issue,
-				effectiveBuildDef,
-				cfg.RepoPath,
-				*buildID,
-				client,
-				cfg.LogMaxBytes,
-			)
-			if err != nil {
-				return err
-			}
-			if err := payload.WriteInstructions(instructionsPath, failurePayload); err != nil {
-				return err
-			}
-			if err := invokeLLM(cfg.LLM, instructionsPath); err != nil {
-				return err
-			}
-			if err := gitCommitAndPush(cfg.RepoPath, "Automated fix for build failure"); err != nil {
-				return err
-			}
+		if buildID == nil {
 			if effectiveBuildDef == "" {
 				return fmt.Errorf("missing build definition id; cannot queue a new build")
 			}
@@ -192,9 +175,49 @@ func Run(cfg RunConfig) error {
 				return err
 			}
 			buildID = &newID
-			time.Sleep(time.Duration(cfg.SleepSeconds) * time.Second)
-			continue
 		}
+
+		result, err := waitOnBuild(client, *buildID, cfg.SleepSeconds)
+		if err != nil {
+			return err
+		}
+		if result.Result == "succeeded" {
+			return nil
+		}
+		if result.DefinitionID != "" {
+			effectiveBuildDef = result.DefinitionID
+		}
+
+		failurePayload, err := payload.BuildFailureInstructions(
+			cfg.Issue,
+			effectiveBuildDef,
+			cfg.RepoPath,
+			result.BuildID,
+			client,
+			cfg.LogMaxBytes,
+		)
+		if err != nil {
+			return err
+		}
+		if err := payload.WriteInstructions(instructionsPath, failurePayload); err != nil {
+			return err
+		}
+		if err := invokeLLM(cfg.LLM, instructionsPath); err != nil {
+			return err
+		}
+		if err := gitCommitAndPush(cfg.RepoPath, fmt.Sprintf("sisyphus iteration %d", iteration)); err != nil {
+			return err
+		}
+		iteration++
+
+		if effectiveBuildDef == "" {
+			return fmt.Errorf("missing build definition id; cannot queue a new build")
+		}
+		newID, err := ado.QueueBuild(client, effectiveBuildDef, "")
+		if err != nil {
+			return err
+		}
+		buildID = &newID
 		time.Sleep(time.Duration(cfg.SleepSeconds) * time.Second)
 	}
 }

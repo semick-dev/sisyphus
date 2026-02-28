@@ -15,12 +15,12 @@ import (
 )
 
 type config struct {
-	Issue       string
-	Build       string
-	PAT         string
-	LLM         string
+	Issue        string
+	Build        string
+	PAT          string
+	LLM          string
 	SleepSeconds int
-	LogMaxBytes int
+	LogMaxBytes  int
 }
 
 func parseArgs() (config, error) {

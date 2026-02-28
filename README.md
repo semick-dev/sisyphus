@@ -18,12 +18,6 @@ Your local pwd will be used as the working directory, so plan accordingly!
 
 The agent has been rewritten in Go under:
 
-- `cmd/sisyphus-agent`
-- `internal/ado`
-- `internal/payload`
-- `internal/push`
-- `internal/man`
-
 Build the CLI:
 
 ```bash

@@ -1,8 +1,8 @@
 package payload
 
 import (
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,19 +10,32 @@ import (
 	"sisyphus/internal/ado"
 )
 
-func TestBuildFailureInstructionsIncludesLog(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/logs/") {
-			w.Header().Set("Content-Type", "text/plain")
-			_, _ = w.Write([]byte("boom"))
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"value":[{"id":7}]}`))
-	}))
-	defer ts.Close()
+type roundTripFunc func(*http.Request) (*http.Response, error)
 
-	client := ado.NewClient("myorg", "myproject", ts.URL, "token")
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestBuildFailureInstructionsIncludesLog(t *testing.T) {
+	client := ado.NewClient("myorg", "myproject", "https://example.invalid", "token")
+	client.HTTPClient = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			var body string
+			contentType := "application/json"
+			if strings.Contains(r.URL.Path, "/logs/") {
+				body = "boom"
+				contentType = "text/plain"
+			} else {
+				body = `{"value":[{"id":7}]}`
+			}
+			return &http.Response{
+				StatusCode: 200,
+				Header:     http.Header{"Content-Type": []string{contentType}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Request:    r,
+			}, nil
+		}),
+	}
 
 	result, err := BuildFailureInstructions(
 		"Org/repo#1",

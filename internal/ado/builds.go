@@ -132,29 +132,33 @@ func GetBuildResult(client *Client, buildID int) (string, error) {
 	return "unknown", nil
 }
 
+func ExtractBuildDefinitionID(build map[string]any) string {
+	definition, ok := build["definition"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	switch raw := definition["id"].(type) {
+	case string:
+		return raw
+	case float64:
+		return strconv.Itoa(int(raw))
+	case int:
+		return strconv.Itoa(raw)
+	default:
+		return ""
+	}
+}
+
 func GetBuildDefinitionID(client *Client, buildID int) (string, error) {
 	data, err := GetBuild(client, buildID, "")
 	if err != nil {
 		return "", err
 	}
-	definition, ok := data["definition"].(map[string]any)
-	if !ok {
+	defID := ExtractBuildDefinitionID(data)
+	if defID == "" {
 		return "", fmt.Errorf("build %d does not include a definition id", buildID)
 	}
-	defID := definition["id"]
-	if defID == nil {
-		return "", fmt.Errorf("build %d does not include a definition id", buildID)
-	}
-	switch v := defID.(type) {
-	case string:
-		return v, nil
-	case float64:
-		return strconv.Itoa(int(v)), nil
-	case int:
-		return strconv.Itoa(v), nil
-	default:
-		return "", fmt.Errorf("unsupported definition id type %T", defID)
-	}
+	return defID, nil
 }
 
 func anyToInt(v any) (int, error) {
