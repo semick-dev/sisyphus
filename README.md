@@ -2,6 +2,14 @@
 
 Have you ever fought a failing build and wanted to die? Enter `sisyphus`. It is a local ralph loop for fixing _builds_, not self improving _agents_.
 
+Give it:
+- A build definition and an optional initial prompt
+ - Watch it drive that definition till it has something building successfully
+- A failed build
+  - Watch it interpret those errors and come up with a fix! 
+
+These run _locally_, using your **logged in cli context** so that you can easily drop in an out of the loop.
+
 ![This could be you](peasants.png)
 
 For things that are seemingly just fighting with the OS or system, let this simple agent loop push the rock for you.
