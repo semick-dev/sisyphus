@@ -4,7 +4,7 @@ Have you ever fought a failing build and wanted to die? Enter `sisyphus`. It is 
 
 Give it:
 - A build definition and an optional initial prompt
- - Watch it drive that definition till it has something building successfully
+  - Watch it drive that definition till it has something building successfully
 - A failed build
   - Watch it interpret those errors and come up with a fix! 
 
