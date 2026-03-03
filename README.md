@@ -1,14 +1,12 @@
 # sisyphus
 
-Have you ever fought a failing build and wanted to kill yourself? Enter `sisyphus`.
+Have you ever fought a failing build and wanted to die? Enter `sisyphus`. It is a local ralph loop for fixing _builds_, not self improving _agents_.
 
 ![This could be you](peasants.png)
 
 For things that are seemingly just fighting with the OS or system, let this simple agent loop push the rock for you.
 
-
 ![I snipped a lot of dead air lol](sisyphus.gif)
-
 
 The agent is written in go.
 
